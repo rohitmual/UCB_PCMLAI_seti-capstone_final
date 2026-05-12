@@ -1,24 +1,28 @@
-# Classifying SETI Technosignatures vs. Radio Interference with Classical ML
+# RFI Rejection and Candidate Triage for SETI Cadence Data — Classical ML on Real GBT Observations
+
+## Operational problem
+
+SETI campaigns produce far more candidate signals than astronomers can manually review. The Breakthrough Listen GBT corpus alone is **~120 TB** and a single ABACAD cadence at 1.1–1.9 GHz contains **3.78 million** 1024-pixel spectrogram snippets per cadence. The dominant workload isn't "finding ETI" — it's **rejecting radio-frequency interference (RFI)** efficiently enough to leave a candidate set small enough for human cadence-stack inspection. The deep-learning reference (Ma et al. 2023, *Nature Astronomy*) uses a β-VAE + Random Forest pipeline that achieves AUC = 0.9993 on **simulated** benchmark data, but at the cost of GPU compute (~50 GB VRAM × 3 nodes) and decisions astronomers cannot inspect feature-by-feature.
 
 ## Executive Summary
 
-This capstone project applies classical, GPU-free, interpretable machine learning techniques — **Principal Component Analysis (PCA)**, **k-Means clustering**, and three classifiers (**LASSO** logistic regression, **Random Forest**, and **XGBoost**) — to the Search for Extraterrestrial Intelligence (**SETI**). The pipeline fits and evaluates these models on **3,784,704 spectrogram snippets** extracted from **6 real Green Bank Telescope (GBT) observations (~93 GB raw)** of the **ABACAD cadence** (the standard SETI observing pattern — three on-source observations of the target interleaved with three off-source observations of nearby reference stars), recorded on 2017-06-24 around the **nearby star HIP 13375 (~100 light-years from Earth)**. The pipeline correctly surfaces anomalous frequencies — the top candidate at **1426.61 MHz** scores **16× above the noise floor** — but visual cadence-stack inspection identifies it as a continuous Doppler-drifting satellite signal present in all six observations, not an extraterrestrial source.
+This capstone applies classical, GPU-free, interpretable ML — **PCA**, **k-Means**, and three classifiers (**LASSO** logistic regression, **Random Forest**, **XGBoost**) — to **3,784,704 spectrogram snippets** extracted from 6 real GBT observations (~93 GB raw) of the **ABACAD cadence** around the nearby star **HIP 13375** (~100 light-years), recorded 2017-06-24. The pipeline ranks anomalous frequencies and produces a small candidate list for human cadence-stack review. The top candidate at **1426.61 MHz** scores far above the next-ranked hit, but visual cadence inspection identifies it as a continuous Doppler-drifting satellite signal present in all six panels — not target-locked emission.
 
-**Bottom line:** classical ML can detect anomalies (distinguish unusual signals from background noise for downstream analysis) in real telescope data cheaply (laptop, no GPU) and transparently, but cannot algorithmically distinguish pointing-correlated **radio-frequency interference (RFI)** from real target-locked candidates. **No extraterrestrial intelligence (ETI) candidates were found — and finding them was never the goal.** The deliverable is the pipeline itself and an honest measurement of where classical ML hits its ceiling on real telescope data. This matches the outcome of the reference paper (Ma et al. 2023, *Nature Astronomy*) — 8 candidates from 820 stars, none confirmed on re-observation — and it precisely motivates why the cadence-aware β-VAE (β-Variational Autoencoder) approaches in modern SETI exist.
+**Bottom line:** classical ML can reduce the candidate review workload from millions of snippets to a handful (top-50 of ~70,000 RFI-filtered frequency bins ≈ a **99.93% review-load cut**) on a laptop and in a fully inspectable way, but **cannot algorithmically distinguish pointing-correlated RFI from real target-locked candidates** — visual cadence inspection remains the final filter. The supervised task in this project is an **A-vs-OFF cadence-position proxy**, not direct ETI classification; high AUC reflects target-bandpass discriminability, not ETI detection capability. **Pipeline surfaced 1 algorithmic candidate; 0 survived cadence inspection.** This matches the outcome of Ma et al. (8 candidates from 820 stars, none confirmed) and motivates why cadence-aware feature learning exists.
 
 ---
 
 ## Rationale
 
-The Search for Extraterrestrial Intelligence (SETI) generates millions of signals of interest per observing campaign. The Breakthrough Listen GBT corpus alone is **~120 TB**. Without efficient filtering, finding the few astronomically interesting ones is impossible.
+The Search for Extraterrestrial Intelligence (SETI) generates millions of candidate signals per observing campaign. The Breakthrough Listen GBT corpus alone is **~120 TB**; the single 6-file ABACAD cadence ingested here is **~93 GB raw** producing **3.78M snippets**. Without efficient filtering, the candidate-review workload is intractable for human astronomers.
 
-The deep-learning state-of-the-art (Ma et al. 2023) has two practical drawbacks: it requires significant GPU compute (the paper used **~50 GB total VRAM across 3 dedicated compute nodes** — see Supplementary Figure 11), and its decisions are opaque to peer-reviewing astronomers. **If a classical pipeline can do most of the same filtering work transparently — at a fraction of the cost and with full per-feature explanations — that lowers the cost of SETI research and gives astronomers a model whose decisions they can defend.** This project measures, on real GBT data, exactly how much classical methods give up versus the deep-learning baseline and where they run out of room.
+The deep-learning state-of-the-art (Ma et al. 2023) reports AUC = 0.9993 on simulated benchmark data, but at a real infrastructure cost: **~50 GB total VRAM across 3 dedicated compute nodes** (Supplementary Figure 11), several days of training, and decisions astronomers cannot inspect feature-by-feature. This project measures, on real GBT data, what classical ML achieves at **laptop-CPU scale (no GPU, ~50 min end-to-end fresh from raw)** with **per-PC coefficient interpretability**, and where the classical approach runs out of room. The trade-off is quantified explicitly in §6e and §6f of the final report rather than asserted qualitatively.
 
 ---
 
 ## Research Question
 
-**Can classical, GPU-free, interpretable machine learning — PCA dimensionality reduction, k-Means clustering, and L1-regularized / tree-based classification — distinguish potential extraterrestrial technosignatures from radio-frequency interference in real Breakthrough Listen telescope data, without neural networks or domain-specific feature engineering?**
+**Can classical, GPU-free, interpretable machine learning — PCA dimensionality reduction, k-Means clustering, and L1-regularized / tree-based classification — perform efficient RFI rejection and candidate triage on real Breakthrough Listen ABACAD cadence data, reducing the human review workload to a level tractable for visual cadence-stack inspection?** Note: the project does not attempt direct ETI classification; the supervised pretext task is A-vs-OFF cadence-position discrimination, which measures target-bandpass separability and is interpreted as the *upper bound* of what the 15-d PCA representation supports for triage, not as evidence of ETI detection.
 
 ---
 
@@ -39,17 +43,17 @@ The deep-learning state-of-the-art (Ma et al. 2023) has two practical drawbacks:
 
 All six files are available at the [Breakthrough Listen Open Data Archive](http://seti.berkeley.edu/opendata). Filenames follow the BL convention: `spliced_blc<nodes>_guppi_<MJD>_<seconds-since-midnight-UTC>_<target>_<scan>.gpuspec.0000.h5` — MJD 57928 corresponds to 2017-06-24, and the seconds-since-midnight encoding (54431 = 15:07:11) matches the observation times above.
 
-Each file: HDF5 filterbank, ~15 GB on disk, frequency range 1.0–1.9 GHz, native resolution **2.79 Hz × 18.7 s**, **16 time bins × ~318 million frequency channels** per observation. The ABACAD cadence is the standard SETI observing pattern — three observations of the target star (A) interleaved with three different OFF-source stars (B, C, D). A genuine signal from the target appears in all three A panels but is absent from the OFFs; terrestrial RFI generally appears in all six panels.
+Each file: HDF5 filterbank, ≈15 GB on disk, frequency range 1.0–1.9 GHz, native resolution **2.79 Hz × 18.7 s**, **16 time bins × ≈318 million frequency channels** per observation. The ABACAD cadence is the standard SETI observing pattern — three observations of the target star (A) interleaved with three different OFF-source stars (B, C, D). A genuine signal from the target appears in all three A panels but is absent from the OFFs; terrestrial RFI generally appears in all six panels.
 
 ### Why HIP 13375?
 
-HIP 13375 is a **nearby star, approximately ~100 light-years from Earth** — one of the closer Hipparcos-catalog targets observed by Breakthrough Listen. Three practical reasons drove the choice:
+HIP 13375 is a **nearby star, approximately ≈100 light-years from Earth** — one of the closer Hipparcos-catalog targets observed by Breakthrough Listen. Three practical reasons drove the choice:
 
 1. **Astrophysical priority** — proximity matters. A hypothetical transmitter of fixed power produces a signal-to-noise ratio that falls off as 1/distance². The closer the star, the stronger any real technosignature would be — making nearby stars (typically < 50 parsecs) the highest-priority targets in any SETI survey.
 2. **Complete public ABACAD cadence available** — the Breakthrough Listen Open Data Archive contains a full six-file ABACAD cadence around HIP 13375 from the 2017-06-24 observing session, with all the matching OFF-source observations needed for cadence filtering. Many other targets in the archive are missing one or more cadence panels.
 3. **Reproducibility** — the data is fully public, freely downloadable, and used in prior Breakthrough Listen publications, making any result here directly comparable to existing work.
 
-Raw data files are not redistributed here due to size (~93 GB); they are downloaded directly from the Breakthrough Listen archive.
+Raw data files are not redistributed here due to size (≈93 GB); they are downloaded directly from the Breakthrough Listen archive.
 
 Reference paper: Ma, P. X. et al. (2023). *A deep-learning search for technosignatures of 820 nearby stars.* **Nature Astronomy**. arXiv: [2301.12670](https://arxiv.org/abs/2301.12670).
 
@@ -59,11 +63,11 @@ Reference paper: Ma, P. X. et al. (2023). *A deep-learning search for technosign
 
 The pipeline runs in six stages, all implemented in pure scikit-learn / numpy / h5py (no neural networks, no GPU required):
 
-0. **Raw-data acquisition** ([`src/download_cadence.py`](src/download_cadence.py)) — fetches the six Breakthrough Listen HDF5 files for the 2017-06-24 HIP 13375 ABACAD cadence from the BL Open Data Archive into `data/raw/`. ~93 GB total; runtime ~30–60 min depending on bandwidth.
+0. **Raw-data acquisition** ([`src/download_cadence.py`](src/download_cadence.py)) — fetches the six Breakthrough Listen HDF5 files for the 2017-06-24 HIP 13375 ABACAD cadence from the BL Open Data Archive into `data/raw/`. ≈93 GB total; runtime ≈30–60 min depending on bandwidth.
 
-1. **Streaming ingestion** ([`src/ingest_cadence.py`](src/ingest_cadence.py)) — read each of the 6 GBT files, slice into **621,544 snippets** of 16 time × 64 frequency pixels (after 8× frequency downsampling), median-normalize per snippet, and append to a single HDF5 archive `cadence_features.h5`. **Total: 3,784,704 snippets, 15.5 GB.**
+1. **Streaming ingestion** ([`src/ingest_cadence.py`](src/ingest_cadence.py)) — read each of the 6 GBT files, slice into **630,784 snippets** of 16 time × 64 frequency pixels (after 8× frequency downsampling), median-normalize per snippet, and append to a single HDF5 archive `cadence_features.h5`. **Total: 3,784,704 snippets, 15.5 GB.**
 
-2. **PCA dimensionality reduction** (notebook 2, Steps 3–4) — fit `StandardScaler` + `PCA(n_components=15)` on a 500K-snippet random sample (~2 GB in RAM), then transform all 3.78M snippets in 100K batches. **Per-snippet reconstruction error is the unsupervised anomaly score.**
+2. **PCA dimensionality reduction** (notebook 2, Steps 3–4) — fit `StandardScaler` + `PCA(n_components=15)` on a 500K-snippet random sample (≈2 GB in RAM), then transform all 3.78M snippets in 100K batches. **Per-snippet reconstruction error is the unsupervised anomaly score.**
 
 3. **ABACAD candidate ranking** (notebook 2, Steps 5–6) — aggregate reconstruction errors into 10 kHz frequency bins; per-bin score = `mean(error in A panels) − mean(error in OFF panels)`. Filter known RFI bands (Inmarsat, GPS/GNSS, Iridium, MSS uplink, GSM-1800, AWS-3 cellular) and paper-excluded ranges (< 1.1 GHz, 1.2–1.34 GHz notch filter, > 1.9 GHz).
 
@@ -82,7 +86,7 @@ The pipeline runs in six stages, all implemented in pure scikit-learn / numpy / 
 
 ```
 Python 3.13 · scikit-learn · xgboost · numpy · h5py · hdf5plugin · matplotlib · pandas · scipy
-No GPU. Runs on a laptop (~20 GB peak RAM during ingestion).
+No GPU. Runs on a laptop (≈20 GB peak RAM during ingestion).
 ```
 
 ---
@@ -95,45 +99,56 @@ No GPU. Runs on a laptop (~20 GB peak RAM during ingestion).
 
 ### ABACAD ranking — top candidates after RFI/excluded-band filtering
 
-| Rank | Frequency (MHz) | ABACAD score | mean(A) | mean(OFF) |
-|---|---|---|---|---|
-| **1** | **1426.610** | **20.19** | 22.72 | 2.53 |
-| 2 | 1404.000 | 1.22 | 2.05 | 0.83 |
-| 3 | 1176.450 | 1.05 | 1.85 | 0.80 |
-| 4 | 1124.930 | 0.76 | 2.36 | 1.60 |
-| 5 | 1180.020 | 0.37 | 4.11 | 3.74 |
+| Rank | Frequency (MHz) | ABACAD score |
+|---|---|---|
+| **1** | **1426.610** | **20.19** |
+| 2 | 1499.990 | 8.13 |
+| 3 | 1500.000 | 3.00 |
+| 4 | 1404.000 | 1.22 |
+| 5 | 1176.450 | 1.05 |
 
-The rank-1 candidate scores **16× above the second-ranked candidate** — a clear standalone outlier, well outside the noise floor. Drift-consistency check across A1/A2/A3 panels passes (`drift_std = 0.047`). Rank-1 stable across n=8 (score 20.53) and n=15 (score 20.19); also stable when scoring by max-time-bin error instead of mean-time error (score 53.30).
+The rank-1 candidate scores **~2.5× above rank 2** (and ~17× above rank 4). Rank 2 and rank 3 are adjacent 10-kHz bins of the same emitter near 1500 MHz — they should be treated as a single candidate during cadence inspection. Drift-consistency check across A1/A2/A3 panels for rank-1 passes (`drift_std = 0.047`). Rank-1 is stable across n=8 (score 20.53) and n=15 (score 20.19); also stable when scoring by max-time-bin error instead of mean-time error (score 53.30).
 
 ### Visual cadence-stack inspection of the top candidate
 
-A 6-panel cadence stack at 1426.61 MHz reveals a **continuous Doppler-drifting narrowband signal** (~0.6 Hz/s drift) **across all six observations** — A panels and OFF panels alike, with similar brightness. This is the diagnostic signature of a low-Earth-orbit satellite, not an extraterrestrial source. The pipeline ranked it #1 because antenna sidelobe gain varies with telescope pointing direction (giving slightly higher amplitude on A panels), but the underlying emitter is terrestrial.
+A 6-panel cadence stack at 1426.61 MHz reveals a **continuous Doppler-drifting narrowband signal** (≈0.6 Hz/s drift) **across all six observations** — A panels and OFF panels alike, with similar brightness. This is the diagnostic signature of a low-Earth-orbit satellite, not an extraterrestrial source. The pipeline ranked it #1 because antenna sidelobe gain varies with telescope pointing direction (giving slightly higher amplitude on A panels), but the underlying emitter is terrestrial.
 
-Visual inspection of ranks 2–5 (drift-consistent candidates) confirmed the same pattern: every top candidate shows signals present in all six panels — RFI in every case. **Zero of the top-5 drift-consistent candidates pass visual cadence inspection as a real ETI candidate.**
+Visual inspection of rank-1 (1426.61 MHz) confirms it as a low-Earth-orbit satellite — present in all six panels with similar brightness. The new rank-2 / rank-3 hits at 1499.99 / 1500.00 MHz (adjacent bins of the same emitter, in a known avionics-RFI region) await fresh visual inspection in this revision; the prior expectation is RFI as well. **Rank-1 fails as a real ETI candidate; no candidate so far has survived cadence inspection.**
 
 ### k-Means clustering
 
 | k | Silhouette (50K sample) | ARI vs. A-vs-OFF |
 |---|---|---|
-| 2 | 0.580 | 0.029 |
-| 3 | 0.643 | 0.011 |
-| 4 | 0.213 | 0.110 |
-| 5 | 0.206 | 0.107 |
-| **6** | **0.301** | **0.175** |
+| 2 | 0.4773 | 0.0683 |
+| 3 | 0.4378 | 0.0902 |
+| **4** | **0.4932** | 0.0056 |
+| **5** | 0.1513 | **0.2015** |
+| 6 | 0.2505 | 0.1507 |
 
-ARI is uniformly low — discovered clusters only weakly correlate with cadence position. The k=6 cross-tabulation reveals that clusters track *per-target bandpass signature* (HIP 12790 and HIP 12919 each form distinctive clusters) rather than ON/OFF cadence identity. k-Means on PCA features is therefore **not sufficient on its own** for SETI candidate discrimination — it surfaces per-target spectral character, which is unrelated to ETI.
+`MiniBatchKMeans(n_init=20)` for stability. Silhouette peaks at k=4 (best cohesion); ARI peaks at k=5 (best agreement with A-vs-OFF labels). The two diagnostics point at different k, and all ARIs remain ≤ 0.20 — discovered clusters correlate only weakly with cadence position. The k=6 cross-tabulation reveals that clusters track *per-target bandpass signature* (HIP 12790 and HIP 12919 each form distinctive clusters dominating their respective panels) rather than ON/OFF cadence identity. k-Means on PCA features is therefore **not sufficient on its own** for SETI candidate discrimination — it surfaces per-target spectral character, which is unrelated to ETI.
 
 ### Classifier comparison (A-vs-OFF binary, GridSearchCV, 3-fold CV, sample N=100,000)
 
 | Model | Best hyperparameters | CV best AUC | Test AUC | Test accuracy | Fit time |
 |---|---|---|---|---|---|
-| LASSO logistic (L1) | `C = 0.1` | 0.7716 | 0.7710 | 0.7514 | ~5 s |
-| Random Forest | `n_estimators=200, max_depth=None` | 0.9217 | **0.9252** | **0.8364** | ~45 s |
-| XGBoost | `n_estimators=200, max_depth=4` | 0.9163 | 0.9204 | 0.8300 | ~8 s |
+| LASSO logistic (L1) | `C = 0.01` | 0.7651 | 0.7564 | 0.7247 | ≈5 s |
+| Random Forest | `n_estimators=200, max_depth=None` | 0.9192 | **0.9127** | **0.8226** | ≈45 s |
+| XGBoost | `n_estimators=200, max_depth=4` | 0.9139 | 0.9067 | 0.8157 | ≈8 s |
 
-**Both non-linear classifiers substantially outperform LASSO** — a ~15-AUC-point gap (Random Forest 0.9252 / XGBoost 0.9204 vs. LASSO 0.7710) — indicating the relationship between PCA features and target identity is **non-linear**. Random Forest narrowly edges out XGBoost (within ~0.5 AUC points), consistent with Ma et al.'s choice of Random Forest on β-VAE latent vectors. The fact that two independent tree-based ensembles converge on essentially the same AUC ceiling (~0.92) tells us **classifier choice is no longer the bottleneck** — the discriminative information available in the 15-d PCA representation has been substantially extracted.
+**Numbers above are under a group-aware split** keyed on `(file_idx × 1-MHz frequency block)` — no source file and no 1-MHz block ever appears in both train and test. This eliminates spectral- and file-level leakage that an IID split would carry. **Both non-linear classifiers substantially outperform LASSO** — a ≈15-AUC-point gap (Random Forest 0.9127 / XGBoost 0.9067 vs. LASSO 0.7564) — indicating the relationship between PCA features and target identity is **non-linear**. Random Forest narrowly edges out XGBoost (within ≈0.6 AUC points), consistent with Ma et al.'s choice of Random Forest on β-VAE latent vectors. The fact that two independent tree-based ensembles converge on essentially the same AUC ceiling (≈0.91) tells us **classifier choice is no longer the bottleneck** — the discriminative information available in the 15-d PCA representation has been substantially extracted.
 
-**Important interpretation caveat.** High AUC reflects target-bandpass discriminability between HIP 13375 and the OFF targets (different sky regions seeing different RFI environments, different receiver-state effects); it is **not** evidence of ETI detection. To improve beyond the ~0.92 ceiling, the next lever is a richer feature representation (e.g. a cadence-aware encoder), not a more powerful classifier.
+**Operational metric — recall at fixed false-positive rate.** For triage, AUC is less actionable than "how many true A snippets do we keep at a tolerable false-alarm rate?":
+
+| FPR | Random Forest | XGBoost | LASSO |
+|---|---|---|---|
+| 10⁻³ | 0.092 | 0.071 | 0.001 |
+| 10⁻² | 0.311 | 0.284 | 0.006 |
+| 5 × 10⁻² | 0.580 | 0.558 | 0.236 |
+| 10⁻¹ | 0.707 | 0.684 | 0.390 |
+
+LASSO collapses below 5% FPR — not a viable triage classifier at astronomer-strict thresholds. RF and XGB track within a few points everywhere. Full operational discussion in Report §6d-bis.
+
+**Important interpretation caveat.** High AUC reflects target-bandpass discriminability between HIP 13375 and the OFF targets (different sky regions seeing different RFI environments, different receiver-state effects); it is **not** evidence of ETI detection. To improve beyond the ≈0.91 ceiling, the next lever is a richer feature representation (e.g. a cadence-aware encoder), not a more powerful classifier.
 
 ### Bottom line
 
@@ -143,11 +158,11 @@ ARI is uniformly low — discovered clusters only weakly correlate with cadence 
 
 ## Next Steps
 
-1. **Cadence-aware feature representation.** Concatenate the 6-panel feature vectors at each frequency before PCA so the components encode cadence shape rather than per-snippet appearance — the classical analog of the paper's β-VAE clustering loss (Λ_S + Λ_R).
+1. **Cadence-aware feature representation (the leading classical extension).** Concatenate the 6-panel feature vectors at each frequency before PCA so the components encode cadence *shape* (1024 × 6 = 6144-d input, one row per frequency bin instead of one per snippet) rather than per-snippet appearance. This is the classical analog of the paper's β-VAE clustering loss (Λ_S + Λ_R): the encoder would then have to choose whether a frequency bin "looks ABACAD-shaped" or "looks all-six-bright" as part of its reconstruction objective, which is exactly the discrimination this project's pipeline cannot make algorithmically without visual inspection. **Expected outcome:** either a measurable lift over the AUC ≈ 0.92 ceiling on the same A-vs-OFF pretext task, or — equally informative — confirmation that the ceiling persists, ruling out a class of "simple fix" extensions and strengthening the case for the deep-learning baseline. Implementation is straightforward (≈100 lines reusing the existing ingestion output); compute is ≈15 minutes on the same laptop.
 2. **Drift-rate consistency on all top-K candidates.** Currently implemented for top-20 in notebook 2 Step 7; extending to top-1000 would auto-reject more RFI without requiring visual inspection.
 3. **Compare against `turbo_seti`.** The Breakthrough Listen team's production drift-search code is the right benchmark; overlap with the classical pipeline's top candidates would validate the approach as a less-expensive screening tool.
 4. **Scale to multiple cadences.** This project analyzed one campaign (6 files, 1 ABACAD cadence). Processing the full 1004-cadence Breakthrough Listen archive (Ma et al.'s dataset) would establish a corpus of validated negatives and surface cross-cadence patterns.
-5. **Wider snippet windows for higher drift rates.** Current 512-channel snippet covers ±5 Hz/s drift sensitivity. Ma et al. use 4,096-channel snippets with overlapping search windows to reach ±10 Hz/s. Adopting that schema would widen the detection space at the cost of ~8× compute.
+5. **Wider snippet windows for higher drift rates.** Current 512-channel snippet covers ±5 Hz/s drift sensitivity. Ma et al. use 4,096-channel snippets with overlapping search windows to reach ±10 Hz/s. Adopting that schema would widen the detection space at the cost of ≈8× compute.
 
 ---
 
@@ -159,6 +174,7 @@ What ships in this repository:
 seti_capstone_solution/
 ├── README.md                                         # this file (non-technical project summary)
 ├── Capstone Project_Final Report.md                  # 6-section technical report
+├── requirements.txt                                  # Python dependencies with minimum-version requirements (pip install -r requirements.txt)
 ├── .gitignore
 │
 ├── 1. data_loading_and_exploration.ipynb             # notebook 1 — load cadence metadata, per-panel sanity checks
@@ -172,35 +188,38 @@ seti_capstone_solution/
 ├── data/processed/
 │    ├── abacad_candidates.csv                        # top-50 raw candidates (pre-RFI-band filter)
 │    └── abacad_candidates_clean.csv                  # top-50 candidates after RFI-band exclusion
+│                                                     # cadence_pca_features.npz is regenerated by notebook 2 §1–2
+│                                                     # or downloaded from the GitHub Release (see Reproduction below)
 │
 └── images/
-     └── cadence_stack_rank1_1426MHz.png              # 6-panel cadence stack of the rank-1 candidate (1426.61 MHz)
+     └── cadence_stack_rank1_1426MHz.png              # 6-panel cadence stack of the rank-1 candidate (referenced as Figure 1 in the report)
 ```
 
 **Not in the repo (too large for GitHub) — three reproducibility paths:**
 
 | Artifact | Size | How to obtain |
 |---|---|---|
-| `data/raw/*.h5` (6 files) | ~93 GB | `python src/download_cadence.py` (~30–60 min) |
-| `data/processed/cadence_features.h5` | ~15.5 GB | `python src/ingest_cadence.py` (~40 min, after the raw files are present) |
-| `data/processed/cadence_pca_features.npz` | ~295 MB | **Fast path:** `gh release download v1.0 --pattern "cadence_pca_features.npz" --dir data/processed/` — skips the 12-minute PCA stream-transform step |
+| `data/raw/*.h5` (6 files) | ≈93 GB | `python src/download_cadence.py` (≈30–60 min) |
+| `data/processed/cadence_features.h5` | ≈15.5 GB | `python src/ingest_cadence.py` (≈40 min, after the raw files are present) |
+| `data/processed/cadence_pca_features.npz` | ≈295 MB | **Fast path:** `gh release download v1.0 --pattern "cadence_pca_features.npz" --dir data/processed/` — skips the 12-minute PCA stream-transform step |
 
 ### Reproduction
 
-**Full reproduction from scratch (~1.5 hours):**
+**Full reproduction from scratch (≈1.5 hours):**
 
 ```bash
-pip install numpy pandas h5py hdf5plugin scikit-learn xgboost matplotlib jupyterlab
-python src/download_cadence.py    # ~30–60 min — pulls 6 raw HDF5 files into data/raw/
-python src/ingest_cadence.py      # ~40 min — produces data/processed/cadence_features.h5
+pip install -r requirements.txt
+python src/download_cadence.py    # ≈30–60 min — pulls 6 raw HDF5 files into data/raw/
+python src/ingest_cadence.py      # ≈40 min — produces data/processed/cadence_features.h5
 # Then open notebooks 1 and 2 in JupyterLab and "Run All"
 ```
 
-**Fast-path reproduction (~5 min, skips raw data + PCA fit):**
+**Fast-path reproduction (≈5 min, skips raw data + PCA fit):**
 
 ```bash
-pip install numpy pandas h5py hdf5plugin scikit-learn xgboost matplotlib jupyterlab
-gh release download v1.0 --pattern "cadence_pca_features.npz" --dir data/processed/
+pip install -r requirements.txt
+gh release download v1.0 --pattern "cadence_pca_features.npz" --dir data/processed/ \
+    --repo rohitmual/UCB_PCMLAI_seti-capstone_final
 # Then open notebook 2 in JupyterLab and run cells from §3 onwards
 ```
 
@@ -208,7 +227,7 @@ gh release download v1.0 --pattern "cadence_pca_features.npz" --dir data/process
 
 ## Limitations
 
-1. **Single-campaign scope** — analyzed one 6-file ABACAD cadence around HIP 13375. The reference paper analyzed 1004 cadences (~115M snippets); findings here are illustrative, not population-level.
+1. **Single-campaign scope** — analyzed one 6-file ABACAD cadence around HIP 13375. The reference paper analyzed 1004 cadences (≈115M snippets); findings here are illustrative, not population-level.
 2. **No real ETI detected** — by design, this is consistent with the reference paper's outcome and the prior that any genuine ETI signal would be a rare event.
 3. **Linear PCA on raw spectrogram pixels** has known limits — it captures variance modes but not the cadence structure that the paper's neural-net clustering loss exploits. The "Next Steps" section addresses this directly.
 
@@ -235,8 +254,9 @@ gh release download v1.0 --pattern "cadence_pca_features.npz" --dir data/process
 ```bibtex
 @misc{mual2026seti,
   author = {Mual, Rohit},
-  title  = {Classifying SETI Technosignatures vs. Radio Interference with Classical ML:
-            A PCA + k-Means + LASSO/RF/XGBoost Study on Breakthrough Listen GBT Data},
+  title  = {RFI Rejection and Candidate Triage for SETI Cadence Data:
+            A Classical-ML Pipeline (PCA + k-Means + LASSO/RF/XGBoost)
+            on Real Breakthrough Listen GBT Observations},
   year   = {2026},
   note   = {UC Berkeley Professional Certificate in Machine Learning and Artificial Intelligence -- Capstone Project, May 2026}
 }
